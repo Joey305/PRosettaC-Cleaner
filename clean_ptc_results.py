@@ -10,15 +10,17 @@ from typing import Dict, Iterable, List, Set, Tuple
 
 ATOM_RECORDS = {"ATOM  ", "HETATM"}
 PDB_SUFFIXES = {".pdb", ".ent"}
+CLEAN_REMARK = "REMARK JARI-CLEANED\n"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Recursively clean PTC atoms in a Results folder by removing the three "
-            "highest-numbered carbon atoms from residue PTC and any hydrogens directly "
-            "bonded to those deleted carbons. Can choose a folder from the current "
-            "working directory by index, or provide a full path."
+            "Recursively clean PRosettaC Results folders by first removing duplicate "
+            "top-level PDBs that already exist inside cluster directories, then "
+            "removing the three highest-numbered carbon atoms from residue PTC and "
+            "any directly bonded hydrogens. Adds a REMARK JARI-CLEANED flag so files "
+            "are not cleaned twice."
         )
     )
     parser.add_argument(
@@ -55,8 +57,7 @@ def parse_args() -> argparse.Namespace:
 
 def list_cwd_directories() -> List[Path]:
     cwd = Path.cwd()
-    dirs = sorted([p for p in cwd.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
-    return dirs
+    return sorted([p for p in cwd.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
 
 
 def prompt_for_path() -> Path:
@@ -160,9 +161,56 @@ def parse_conect(lines: Iterable[str]) -> Dict[int, Set[int]]:
     return bonds
 
 
+def is_cluster_path(path: Path) -> bool:
+    return any(part.lower().startswith("cluster") for part in path.parts)
+
+
+def detect_duplicate_top_level_pdbs(results_dir: Path) -> List[Path]:
+    """
+    Remove top-level Results/*.pdb files if the same filename appears anywhere
+    inside a cluster directory under Results/.
+    """
+    top_level_files = {
+        p.name: p
+        for p in results_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in PDB_SUFFIXES
+    }
+
+    clustered_names: Set[str] = set()
+    for p in results_dir.rglob("*"):
+        if not p.is_file() or p.suffix.lower() not in PDB_SUFFIXES:
+            continue
+        rel = p.relative_to(results_dir)
+        if is_cluster_path(rel.parent):
+            clustered_names.add(p.name)
+
+    duplicates = [path for name, path in top_level_files.items() if name in clustered_names]
+    return sorted(duplicates, key=lambda p: p.name.lower())
+
+
+def has_clean_remark(lines: List[str]) -> bool:
+    return any(line.strip() == "REMARK JARI-CLEANED" for line in lines)
+
+
+def insert_clean_remark(lines: List[str]) -> List[str]:
+    if has_clean_remark(lines):
+        return lines
+
+    expdta_idx = next((i for i, line in enumerate(lines) if line.startswith("EXPDTA")), None)
+    if expdta_idx is not None:
+        return lines[: expdta_idx + 1] + [CLEAN_REMARK] + lines[expdta_idx + 1 :]
+
+    header_idx = next((i for i, line in enumerate(lines) if line.startswith("HEADER")), None)
+    if header_idx is not None:
+        return lines[: header_idx + 1] + [CLEAN_REMARK] + lines[header_idx + 1 :]
+
+    return [CLEAN_REMARK] + lines
+
+
 def identify_atoms_to_remove(lines: List[str], ptc_resname: str) -> Tuple[List[Tuple[int, str]], Set[int]]:
     ptc_carbons: List[Tuple[int, int, str]] = []
     serial_to_line: Dict[int, str] = {}
+
     for line in lines:
         if not is_atom_or_hetatm(line):
             continue
@@ -196,19 +244,35 @@ def identify_atoms_to_remove(lines: List[str], ptc_resname: str) -> Tuple[List[T
     return removed_named, remove_serials
 
 
-def clean_pdb_lines(lines: List[str], ptc_resname: str) -> Tuple[List[str], List[Tuple[int, str]], Set[int]]:
+def clean_pdb_lines(
+    lines: List[str],
+    ptc_resname: str,
+) -> Tuple[List[str], List[Tuple[int, str]], Set[int], bool]:
+    """
+    Returns:
+        cleaned_lines,
+        removed_named,
+        remove_serials,
+        already_cleaned
+    """
+    already_cleaned = has_clean_remark(lines)
+    if already_cleaned:
+        return lines, [], set(), True
+
     removed_named, remove_serials = identify_atoms_to_remove(lines, ptc_resname)
 
     cleaned: List[str] = []
     for line in lines:
         if is_atom_or_hetatm(line) and atom_serial(line) in remove_serials:
             continue
+
         if line.startswith("ANISOU"):
             try:
                 if int(line[6:11]) in remove_serials:
                     continue
             except ValueError:
                 pass
+
         if line.startswith("CONECT"):
             ints: List[int] = []
             for start in range(6, len(line), 5):
@@ -218,27 +282,35 @@ def clean_pdb_lines(lines: List[str], ptc_resname: str) -> Tuple[List[str], List
                         ints.append(int(field))
                     except ValueError:
                         pass
+
             if ints:
                 src, *neighbors = ints
                 if src in remove_serials:
                     continue
+
                 kept_neighbors = [n for n in neighbors if n not in remove_serials]
                 if kept_neighbors:
                     rebuilt = f"CONECT{src:5d}" + "".join(f"{n:5d}" for n in kept_neighbors)
                     cleaned.append(rebuilt + "\n")
                 continue
+
         cleaned.append(line)
 
-    return cleaned, removed_named, remove_serials
+    cleaned = insert_clean_remark(cleaned)
+    return cleaned, removed_named, remove_serials, False
 
 
-def clean_pdb_file(src: Path, dst: Path, ptc_resname: str) -> Tuple[List[Tuple[int, str]], Set[int]]:
+def clean_pdb_file(
+    src: Path,
+    dst: Path,
+    ptc_resname: str,
+) -> Tuple[List[Tuple[int, str]], Set[int], bool]:
     text = src.read_text(errors="ignore")
     lines = text.splitlines(keepends=True)
-    cleaned, removed_named, remove_serials = clean_pdb_lines(lines, ptc_resname)
+    cleaned, removed_named, remove_serials, already_cleaned = clean_pdb_lines(lines, ptc_resname)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text("".join(cleaned))
-    return removed_named, remove_serials
+    return removed_named, remove_serials, already_cleaned
 
 
 def swap_cleaned_into_results(results_dir: Path, out_dir: Path) -> None:
@@ -264,7 +336,8 @@ def main() -> int:
     out_dir = base_dir / args.out_name
 
     pdb_files = sorted(
-        p for p in results_dir.rglob("*") if p.is_file() and p.suffix.lower() in PDB_SUFFIXES
+        p for p in results_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() in PDB_SUFFIXES
     )
 
     if not pdb_files:
@@ -274,22 +347,43 @@ def main() -> int:
     print(f"Temporary output     : {out_dir}")
     print(f"PDB files discovered : {len(pdb_files)}")
 
+    duplicates = detect_duplicate_top_level_pdbs(results_dir)
+    if duplicates:
+        print("\nDuplicate top-level PDBs found that also exist in cluster directories:")
+        for dup in duplicates:
+            print(f"  [duplicate] {dup.relative_to(results_dir)}")
+    else:
+        print("\nNo duplicate top-level PDBs detected against cluster directories.")
+
     preview_removed: List[Tuple[int, str]] | None = None
     preview_total_removed = None
-    for first_pdb in pdb_files[:1]:
-        lines = first_pdb.read_text(errors="ignore").splitlines(keepends=True)
-        preview_removed, remove_serials = identify_atoms_to_remove(lines, args.ptc_resname)
-        preview_total_removed = len(remove_serials)
+    preview_source = None
 
-    if preview_removed:
+    for first_pdb in pdb_files:
+        lines = first_pdb.read_text(errors="ignore").splitlines(keepends=True)
+        if has_clean_remark(lines):
+            continue
+        try:
+            preview_removed, remove_serials = identify_atoms_to_remove(lines, args.ptc_resname)
+            preview_total_removed = len(remove_serials)
+            preview_source = first_pdb
+            break
+        except Exception:
+            continue
+
+    if preview_removed and preview_source:
         print(
+            "\nPreview from first uncleaned file "
+            f"({preview_source.relative_to(results_dir)}):\n"
             "Will remove PTC carbons: "
             + ", ".join(name for _, name in preview_removed)
-            + f" (plus directly bonded hydrogens; total atoms removed in each file typically {preview_total_removed})"
+            + f" (plus directly bonded hydrogens; total atoms removed typically {preview_total_removed})"
         )
+    else:
+        print("\nPreview skipped: no uncleaned file with removable PTC carbons found.")
 
     if args.dry_run:
-        print("Dry run complete. No files written.")
+        print("\nDry run complete. No files written.")
         return 0
 
     if out_dir.exists():
@@ -300,19 +394,48 @@ def main() -> int:
 
     shutil.copytree(results_dir, out_dir)
 
+    removed_duplicates = 0
+    for dup_src in detect_duplicate_top_level_pdbs(out_dir):
+        print(f"[deduplicated] removing top-level duplicate {dup_src.relative_to(out_dir)}")
+        dup_src.unlink()
+        removed_duplicates += 1
+
     changed = 0
+    skipped_already_cleaned = 0
+    failed = 0
+
     for dst_pdb in sorted(out_dir.rglob("*")):
         if not dst_pdb.is_file() or dst_pdb.suffix.lower() not in PDB_SUFFIXES:
             continue
-        removed_named, remove_serials = clean_pdb_file(dst_pdb, dst_pdb, args.ptc_resname)
-        changed += 1
-        removed_names = ", ".join(name for _, name in removed_named)
-        print(
-            f"[cleaned] {dst_pdb.relative_to(out_dir)} | removed {removed_names} "
-            f"(+ {len(remove_serials) - len(removed_named)} bonded H atoms)"
-        )
 
-    print(f"\nCleaned {changed} PDB files into temporary folder: {out_dir}")
+        try:
+            removed_named, remove_serials, already_cleaned = clean_pdb_file(
+                dst_pdb, dst_pdb, args.ptc_resname
+            )
+
+            if already_cleaned:
+                skipped_already_cleaned += 1
+                print(f"[skipped] {dst_pdb.relative_to(out_dir)} | already contains REMARK JARI-CLEANED")
+                continue
+
+            changed += 1
+            removed_names = ", ".join(name for _, name in removed_named)
+            extra_h = len(remove_serials) - len(removed_named)
+            print(
+                f"[cleaned] {dst_pdb.relative_to(out_dir)} | removed {removed_names} "
+                f"(+ {extra_h} bonded H atoms) | added REMARK JARI-CLEANED"
+            )
+
+        except Exception as exc:
+            failed += 1
+            print(f"[failed]  {dst_pdb.relative_to(out_dir)} | {exc}")
+
+    print("\nSummary")
+    print(f"  Duplicate top-level files removed : {removed_duplicates}")
+    print(f"  PDB files cleaned                 : {changed}")
+    print(f"  Already-cleaned files skipped     : {skipped_already_cleaned}")
+    print(f"  Files failed                      : {failed}")
+    print(f"  Temporary cleaned folder          : {out_dir}")
 
     if not args.keep_old_results:
         swap_cleaned_into_results(results_dir, out_dir)
