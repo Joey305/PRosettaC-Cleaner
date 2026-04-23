@@ -4,6 +4,31 @@
 
 ---
 
+## 🤝 Need Help with PRosettaC?
+
+If you are working on a **PRosettaC** or broader **PROTAC modeling** project and need help with:
+
+- setting up or troubleshooting a PRosettaC run  
+- cleaning and interpreting PRosettaC outputs  
+- workflow design for PROTAC ternary-complex modeling  
+- collaborations related to PRosettaC, PROTACs, or ternary-complex analysis  
+
+you are welcome to reach out.
+
+[![Contact for PRosettaC help](https://img.shields.io/badge/Contact-jmschulz%40med.miami.edu-blue?style=for-the-badge)](mailto:jmschulz@med.miami.edu?subject=PRosettaC%20Help%20%2F%20Collaboration)
+
+### 📄 Related paper
+
+This cleanup workflow is part of a broader research effort around PROTAC ternary-complex modeling. For background and benchmarking context, see our paper:
+
+**PRosettaC outperforms AlphaFold3 for modeling PROTAC ternary complexes**  
+*Scientific Reports* (2025)  
+DOI: `10.1038/s41598-025-21502-8`
+
+[![Read the paper](https://img.shields.io/badge/Read%20our%20paper-PubMed-success?style=for-the-badge)](https://pubmed.ncbi.nlm.nih.gov/41152377/)
+
+---
+
 ## 🚀 Overview
 
 `clean_ptc_results.py` is a targeted cleanup script for PRosettaC `Results/` directories. It was built to handle the final modeled ternary-complex PDB outputs produced by this workflow and to make them more suitable for downstream analysis.
