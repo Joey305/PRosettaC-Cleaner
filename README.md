@@ -1,40 +1,96 @@
-# clean_ptc_results
+# 🔬 PRosettaC-Cleaner
 
-`clean_ptc_results.py` is a small post-processing utility for **PRosettaC output folders generated on Pegasus2 at IDSC**. It is designed specifically for the `Results` directory structure produced by PRosettaC runs in that environment, where the final modeled ternary-complex PDB files are written as clustered and unclustered `combined_*.pdb` structures.
-
-This script is **not intended as a general PDB cleaner**. It exists for one very specific cleanup step in this workflow:
-
-- identify the `PTC` residue in each PRosettaC result structure
-- remove the **last three carbon atoms** from that `PTC` ligand (the highest-numbered `C##` atoms)
-- remove any directly bonded hydrogens attached to those deleted carbons
-- preserve the full `Results` folder layout
-- replace the original `Results` folder with the cleaned version
+> A lightweight post-processing utility for cleaning **PRosettaC ternary complex outputs** and preparing them for downstream analysis.
 
 ---
 
-## Why this script exists
+## 🚀 Overview
 
-In the PRosettaC workflow, PROTAC conformers are generated and positioned using **virtual atoms** as geometric reference points. These virtual atoms help define anchor locations and orient the PROTAC correctly between the two ligand heads during sampling, alignment, and model construction. In practice, they help **center and place the PROTAC in the intended ternary-complex geometry** while the workflow is building candidate structures.
+`clean_ptc_results.py` is a workflow-specific cleanup tool designed for **PRosettaC output folders generated on Pegasus2 at IDSC**.
 
-By the time you are running this script, that stage is already complete.
+It operates on the standard `Results/` directory and performs a **complete post-processing cleanup** of PRosettaC outputs by:
 
-At the `Results` stage, PRosettaC has already used those geometric/placement conventions to produce final combined models. The extra terminal carbons in the `PTC` residue are no longer needed for placement or centering at this point, so this script removes them from the final output models as a **post-processing cleanup step**.
+- trimming residual linker/construction atoms from the `PTC` residue
+- removing attached hydrogens from those deleted atoms
+- preserving valid connectivity records
+- removing redundant unclustered files when the same structure already exists inside a cluster directory
 
-In other words:
-
-- **during PRosettaC**: the virtual/placement representation is useful for building and centering the PROTAC
-- **at this cleanup stage**: that job is already done, and the final `Results` models can be trimmed for downstream use
+⚠️ This is **not** a general-purpose PDB cleaner. It exists for a very specific and practical cleanup stage in the PRosettaC workflow.
 
 ---
 
-## Intended environment
+## 🧠 Why this script exists
 
-This script was written for:
+During the PRosettaC workflow, PROTAC molecules are constructed and positioned using **virtual atoms** and an extended representation of the linker. These virtual atoms are useful during modeling because they help:
+
+- define anchor geometry between the two ligand heads
+- guide conformational sampling
+- center and orient the PROTAC correctly in the ternary complex
+
+These modeling aids are important **during PRosettaC generation**, but they are not meant to remain part of the final chemically meaningful structure.
+
+By the time PRosettaC writes the final PDB files into the `Results/` directory, the geometry-building step is already complete. However, residual atoms from that construction strategy can still persist in the final `PTC` residue representation.
+
+This script removes those leftover atoms so the final models are cleaner and more appropriate for:
+
+- downstream structural analysis
+- docking evaluation
+- molecular dynamics preparation
+- visualization and figure generation
+
+---
+
+## ⚠️ What gets cleaned up
+
+### 1. `PTC` linker artifact cleanup
+
+For each PRosettaC result structure, the script:
+
+- identifies the `PTC` residue
+- finds the **three highest-numbered carbon atoms** in that residue
+- removes those terminal carbons
+- removes any directly bonded hydrogens attached to those deleted carbons
+- rewrites `CONECT` records so the structure remains internally consistent
+
+These terminal carbons correspond to the residual atoms left behind from the virtual-atom / construction representation used during PRosettaC setup and placement.
+
+---
+
+### 2. Cluster-aware duplicate cleanup
+
+In addition to structural cleanup, the script also performs **file-level cleanup** across the PRosettaC `Results/` tree.
+
+If a file with the **same exact filename** exists:
+
+- at the top level of `Results/`, and
+- inside a cluster directory such as `cluster1/`, `cluster2/`, etc.
+
+then the top-level unclustered copy is removed.
+
+This means clustered results are treated as the **canonical retained outputs**, and redundant unclustered duplicates are discarded.
+
+✅ In practice, this makes the tool a more **complete cleanup utility for PRosettaC outputs**, not just a ligand-editing script.
+
+---
+
+## ✅ Final outcome
+
+After running the script, your `Results/` directory is cleaned so that it is:
+
+- free of leftover virtual-atom-derived terminal linker artifacts
+- stripped of redundant unclustered duplicates when clustered copies exist
+- more compact, consistent, and ready for downstream workflows
+
+---
+
+## 📁 Intended environment
+
+This script was written specifically for:
 
 - **PRosettaC outputs**
-- run on **Pegasus2**
-- from **IDSC**
-- with a job directory containing a `Results/` folder like the standard PRosettaC output tree
+- generated on **Pegasus2**
+- from **IDSC workflows**
+- using the standard PRosettaC-style `Results/` directory structure
 
 Typical example:
 
@@ -56,36 +112,27 @@ JARI-04212026-1/
 
 The script expects either:
 
-- the full path to the **job directory** that contains `Results/`, or
-- the full path directly to the **Results** folder itself
+- the full path to the **job directory** containing `Results/`, or
+- the full path directly to the **`Results/`** folder
 
-When run interactively with no path argument, it can also list directories in your **current working directory** and let you choose one by numeric index.
-
----
-
-## What the script does
-
-1. Accepts a target directory interactively or by full path.
-2. Resolves the correct `Results/` directory.
-3. Creates a cleaned copy of the results.
-4. For every `.pdb` file under `Results/`, it:
-   - finds residue `PTC`
-   - identifies the three highest-numbered carbon atoms named like `C47`, `C48`, `C49`
-   - removes those atoms
-   - removes directly bonded hydrogens connected through `CONECT` records
-   - rewrites `CONECT` records to stay consistent
-5. Replaces the old `Results/` folder with the cleaned one.
-
-Final state:
-
-- original `Results/` is removed
-- cleaned directory is renamed back to `Results/`
-
-This means downstream scripts can keep using the normal `Results` name without modification.
+When run without a path, it can also list directories in the current working directory and let you select one interactively by numeric index.
 
 ---
 
-## Usage
+## 📥 Installation / Download
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Joey305/PRosettaC-Cleaner.git
+cd PRosettaC-Cleaner
+```
+
+No additional dependencies are required beyond standard Python.
+
+---
+
+## 🧑‍💻 Usage
 
 ### Interactive mode
 
@@ -95,9 +142,9 @@ python clean_ptc_results.py
 
 This will:
 
-- print directories in your current working directory with numeric indices
-- let you choose by index
-- or let you enter a full path manually
+- print directories in your current working directory
+- let you choose one by numeric index
+- or allow you to enter a full path manually
 
 ### Direct path mode
 
@@ -119,54 +166,75 @@ python clean_ptc_results.py --dry-run
 
 This previews what would be removed without writing changes.
 
-### Keep the old Results folder
+### Keep old results
 
 ```bash
 python clean_ptc_results.py --keep-old-results
 ```
 
-Use this if you want to preserve the old results instead of replacing them.
+Use this if you want to preserve the original `Results/` folder instead of replacing it.
 
 ---
 
-## Important assumptions
+## ⚙️ What the script does
+
+1. Accepts a target directory interactively or by full path
+2. Resolves the correct `Results/` directory
+3. Creates a cleaned copy of the results
+4. For every `.pdb` file under `Results/`, it:
+   - finds residue `PTC`
+   - identifies the three highest-numbered carbon atoms
+   - removes those atoms
+   - removes directly bonded hydrogens via `CONECT`
+   - rewrites connectivity records to remain consistent
+5. Scans for duplicate filenames across clustered and unclustered outputs
+6. Removes redundant top-level files if the same filename exists inside a cluster directory
+7. Replaces the old `Results/` folder with the cleaned version
+
+Final state:
+
+- original `Results/` is removed (unless preservation is requested)
+- cleaned directory is renamed back to `Results/`
+
+This allows downstream scripts to continue using the expected `Results` name without modification.
+
+---
+
+## ⚠️ Important assumptions
 
 This script assumes:
 
 - the ligand residue name is `PTC`
 - the atoms to remove are the **three highest-numbered carbon atoms** in that residue
-- those carbons are named in a numbered format like `C47`, `C48`, `C49`
-- PRosettaC output PDBs contain valid enough `CONECT` records for attached hydrogen cleanup
+- those carbons are named in a numbered format such as `C47`, `C48`, `C49`
+- PRosettaC output PDBs contain usable `CONECT` records for hydrogen cleanup
+- duplicate file cleanup is based on **exact filename matches** between top-level and clustered outputs
 
-If your output format differs from the standard PRosettaC Pegasus2/IDSC convention, inspect a few files first before using the script broadly.
-
----
-
-## Safety notes
-
-- The script is workflow-specific and should be treated as a **post-processing utility**, not a general structure editor.
-- Always test on a small example first.
-- Use `--dry-run` before bulk cleanup if you want to confirm the detected atoms.
-- If you are preparing a public repository, it is a good idea to include a small example tree or screenshots of expected input/output structure.
+If your output format differs from the standard PRosettaC Pegasus2/IDSC convention, inspect a few files manually before applying the script broadly.
 
 ---
 
-## Suggested GitHub repo description
+## 🛡️ Safety notes
 
-> Post-processing utilities for PRosettaC output structures generated on Pegasus2 at IDSC, including cleanup of terminal PTC atoms in final `Results` PDB models.
+- This is a **workflow-specific post-processing utility**, not a general structure editor
+- Always test on a small example first
+- Use `--dry-run` before bulk cleanup if you want to confirm what will be removed
+- If you are preparing a public repository, it can be helpful to include example input/output trees or screenshots
 
 ---
 
-## Suggested citation / provenance note for the repo
+## 📌 GitHub repository description
 
-If you publish this script in a repository, it helps to state clearly that it is:
+> Post-processing utility for PRosettaC outputs that removes virtual-atom-derived linker artifacts and redundant unclustered duplicates from final `Results` PDB structures.
 
-- built for your local PRosettaC workflow conventions
-- intended for Pegasus2/IDSC-generated output trees
-- not an official PRosettaC utility
+---
 
-Example wording:
+## 🧾 Provenance note
 
-> This repository contains workflow-specific post-processing scripts developed for handling PRosettaC output structures generated on Pegasus2 at IDSC. These scripts are not part of the official PRosettaC distribution.
-# PRosettaC-Cleaner
-# PRosettaC-Cleaner
+This repository contains workflow-specific post-processing scripts developed for handling PRosettaC output structures generated on Pegasus2 at IDSC.
+
+These scripts are:
+
+- tailored to local PRosettaC workflow conventions
+- intended for Pegasus2 / IDSC-generated output trees
+- **not** part of the official PRosettaC distribution
